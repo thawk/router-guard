@@ -17,33 +17,29 @@ HTTPConnection.debuglevel = 1
 
 logging.basicConfig() # you need to initialize logging, otherwise you will not see anything from requests
 logging.getLogger().setLevel(logging.DEBUG)
-requests_log = logging.getLogger("requests.packages.urllib3")
+requests_log = logging.getLogger("yip")
 requests_log.setLevel(logging.DEBUG)
 requests_log.propagate = True
 
 ######################################
 
 protocol = 'http://'
-ip = "192.168.1.1"
+address = "192.168.1.1"
+login_url = protocol + address + '/cgi-bin/index2.asp'
+content_url = protocol + address + '/cgi-bin/content.asp'
 
 sess = requests.Session()
 sess.headers = {
     'User-Agent': UserAgent().chrome,
 }
 
-sess.get(protocol + ip)
-r = sess.post(
-    protocol + ip + '/cgi-bin/index2.asp',
-    data = {
-        'Logoff': '0',
-        'Password': 'nE7jA%5m',
-        'Password1': 'nE7jA%5m',
-        'Password2': 'nE7jA%5m',
-        'Username': 'useradmin',
-        'hLoginTimes': '0',
-        'hLoginTimes_Zero': '0',
-        'logintype': 'usr',
-        'value_one': '1',
-    }
-)
+username = 'useradmin'
+password = 'nE7jA%5m'
+
+sess.get(login_url)
+
+sess.cookies.set(name='UID', value=username, domain=address, path='/')
+sess.cookies.set(name='PSW', value=password, domain=address, path='/')
+
+r = sess.get(content_url)
 
