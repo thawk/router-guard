@@ -157,7 +157,7 @@ def check(router_guard):
 def reboot(router_guard):
     logging.info('Login router...')
     if router_guard.login():
-        logging.info('Reboot router...')
+        logging.warn('Reboot router...')
         router_guard.reboot()
 
         while True:
@@ -171,6 +171,7 @@ def reboot(router_guard):
             logging.info('Checking internet...')
             while True:
                 if router_guard.check_internet():
+                    logging.warn('  Done')
                     return
 
                 if not router_guard.check_router():
