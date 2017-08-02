@@ -12,12 +12,13 @@ from fake_useragent import UserAgent
 
 VERSION=u'20170801'
 
-GUARD_INTERVALS=5
+GUARD_INTERVALS=60
 DELAY_SECS=5
 
 # verbose级别
-VERBOSE_ACTION=1  # 记录每次尝试及结果
-VERBOSE_HTTP=2    # 记录每次的请求及响应
+VERBOSE_ACTION=1  # 记录每次尝试
+VERBOSE_RESULT=2  # 记录每次尝试及结果
+VERBOSE_HTTP=3    # 记录每次的请求及响应
 
 
 def enable_debugging():
@@ -66,53 +67,62 @@ class RouterGuard(object):
                 logging.info("    {}".format(url))
 
             r = action(url, *args, **kwargs)
-            if r.status_code == 200:
-                if self.verbose >= VERBOSE_ACTION:
-                    logging.info("      done")
-                return True
-            else:
-                if self.verbose >= VERBOSE_ACTION:
-                    logging.info("      failed {url}: {status}".format(url=url, status=r.status_code))
-                return False
+            if self.verbose >= VERBOSE_RESULT:
+                logging.info("      {}".format(r.status_code))
+
+            return r.status_code
         except Exception as ex:
-            if self.verbose >= VERBOSE_ACTION:
+            if self.verbose >= VERBOSE_RESULT:
                 logging.info("      failed {url} with exception: {ex}".format(url=url, ex=ex))
-            return False
 
-    def login(self):
+            return 0
+
+    def check_router(self):
+        """检查路由器的状态
+
+        Returns:
+          True  - 网页可以访问。通过检查is_logined属性可以判断是否已登录
+          False - 网页不可访问
+        """
         if self.verbose >= VERBOSE_ACTION:
-            logging.info("  Login to {0} as {1}...".format(self.address, self.username))
+            logging.info("  Check router login status...")
 
-        try:
-            r = self.session.get(self._get_url(''))
-        except Exception as ex:
-            if self.verbose >= VERBOSE_ACTION:
-                logging.info("    failed {url} with exception: {ex}".format(url=self._get_url(''), ex=ex))
+        status_code = self._exec(self.session.get, self._get_url(''))
 
-            return False
-
-        if r.status_code == 200:
+        if status_code == 200:
             self.is_logined = True
             return True
 
-        if not self._exec(self.session.get, self._get_url('/cgi-bin/index2.asp')):
+        self.is_logined = False
+        return status_code > 0
+
+    def login(self):
+        self.check_router()
+
+        if self.is_logined:
+            return True
+
+        if self.verbose >= VERBOSE_ACTION:
+            logging.info("  Login to router...")
+
+        if self._exec(self.session.get, self._get_url('/cgi-bin/index2.asp')) != 200:
             return False
 
         self.session.cookies.set(name='UID', value=self.username, domain=self.address, path='/')
         self.session.cookies.set(name='PSW', value=self.password, domain=self.address, path='/')
 
-        if self._exec(self.session.get, self._get_url('/cgi-bin/content.asp')):
+        if self._exec(self.session.get, self._get_url('/cgi-bin/content.asp')) != 200:
+            return False
+        else:
             self.is_logined = True
             return True
-        else:
-            return False
 
     def logout(self):
         self.is_logined = False
 
-        return self._exec(self.session.get, self._get_url('/cgi-bin/logout.cgi'))
+        return self._exec(self.session.get, self._get_url('/cgi-bin/logout.cgi')) == 200
 
-    def reset(self):
+    def reboot(self):
         return self._exec(
             self.session.post,
             self._get_url('/cgi-bin/mag-reset.asp'),
@@ -121,10 +131,10 @@ class RouterGuard(object):
                 'restoreFlag': '1',
                 'isCUCSupport': '0',
             }
-        )
+        ) == 200
 
-    def check(self, url="http://www.baidu.com"):
-        return self._exec(requests.get, url)
+    def check_internet(self, url="http://www.baidu.com"):
+        return self._exec(requests.get, url) > 0
 
     def __enter__(self):
         return self
@@ -136,44 +146,65 @@ class RouterGuard(object):
         # 未对异常进行处理
         return False
 
-def check(guard):
+def check(router_guard):
     logging.info('Checking router...')
-    guard.login()
-
-    with guard:
+    if router_guard.check_router():
         logging.info('Checking internet...')
-        guard.check()
+        router_guard.check_internet()
 
     logging.info('Done.')
 
-def reset(guard):
+def reboot(router_guard):
     logging.info('Login router...')
-    if guard.login():
-        logging.info('Reset router...')
-        guard.reset()
+    if router_guard.login():
+        logging.info('Reboot router...')
+        router_guard.reboot()
 
-        logging.info('Wait for router ready...')
         while True:
-            time.sleep(DELAY_SECS)
-            if guard.login():
-                break
+            logging.info('Wait for router ready...')
 
-        logging.info('Checking internet...')
-        guard.check()
+            while True:
+                time.sleep(DELAY_SECS)
+                if router_guard.check_router():
+                    break
+
+            logging.info('Checking internet...')
+            while True:
+                if router_guard.check_internet():
+                    return
+
+                if not router_guard.check_router():
+                    break
+
+                time.sleep(DELAY_SECS)
+
+def guard(router_guard):
+    while True:
+        logging.info('Check internet...')
+        if not router_guard.check_internet():
+            logging.info('Check router...')
+            if router_guard.check_router():
+                # 当互联网不可用但路由器可访问时，重启路由器
+                logging.info('Reboot router...')
+                router_guard.reboot()
+
+        time.sleep(GUARD_INTERVALS)
 
 def main(**args):
     if args['verbose'] >= VERBOSE_HTTP:
         enable_debugging()
 
-    guard = RouterGuard(
+    router_guard = RouterGuard(
         address='192.168.1.1', protocol='http',
-        username='useradmin', password='nE7jA%5m',
+        username='useradmin',  password='nE7jA%5m',
         verbose=args['verbose'])
 
-    if args['command'] == "reset":
-        reset(guard)
+    if args['command'] == "reboot":
+        reboot(router_guard)
+    elif args['command'] == "guard":
+        guard(router_guard)
     else:
-        check(guard)
+        check(router_guard)
 
 
 if __name__ == '__main__':
@@ -184,7 +215,7 @@ description''')
     parser.add_argument('-v', '--verbose', action='count', dest='verbose', help=u'Be moderatery verbose')
     parser.add_argument('-q', '--quiet', action='store_true', dest='quiet', default=False, help=u'Only show warning and errors')
     parser.add_argument('--version', action='version', version=VERSION, help=u'Show version and quit')
-    parser.add_argument('command', nargs='?', default='check', choices=['check', 'reset'], help=u'Command')
+    parser.add_argument('command', nargs='?', default='check', choices=['check', 'guard', 'reboot'], help=u'Command')
 
     args = parser.parse_args()
 
