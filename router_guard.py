@@ -9,13 +9,15 @@ import logging
 from logging.handlers import SysLogHandler
 import requests
 import time
-from fake_useragent import UserAgent
 
 PROG_NAME='router_guard'
 VERSION=u'20170825'
 
+DEFAULT_TIMEOUT=5
 GUARD_INTERVALS=60
 DELAY_SECS=5
+
+USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.101 Safari/537.36'
 
 # verbose级别
 VERBOSE_ACTION=1  # 记录每次尝试
@@ -53,7 +55,7 @@ class RouterGuard(object):
 
         self.session = requests.Session()
         self.session.headers = {
-            'User-Agent': UserAgent().chrome,
+            'User-Agent': USER_AGENT,
         }
 
         self.is_logined = False
@@ -68,6 +70,9 @@ class RouterGuard(object):
         try:
             if self.verbose >= VERBOSE_ACTION:
                 logger.info("    {}".format(url))
+
+            if not 'timeout' in kwargs:
+                kwargs['timeout'] = DEFAULT_TIMEOUT
 
             r = action(url, *args, **kwargs)
             if self.verbose >= VERBOSE_RESULT:
