@@ -6,11 +6,13 @@ import argparse
 import codecs
 import locale
 import logging
+from logging.handlers import SysLogHandler
 import requests
 import time
 from fake_useragent import UserAgent
 
-VERSION=u'20170801'
+PROG_NAME='router_guard'
+VERSION=u'20170825'
 
 GUARD_INTERVALS=60
 DELAY_SECS=5
@@ -20,6 +22,7 @@ VERBOSE_ACTION=1  # 记录每次尝试
 VERBOSE_RESULT=2  # 记录每次尝试及结果
 VERBOSE_HTTP=3    # 记录每次的请求及响应
 
+logger = logging.getLogger('router_guard')
 
 def enable_debugging():
     # Enabling debugging at http.client level (requests->urllib3->http.client)
@@ -64,16 +67,16 @@ class RouterGuard(object):
     def _exec(self, action, url, *args, **kwargs):
         try:
             if self.verbose >= VERBOSE_ACTION:
-                logging.info("    {}".format(url))
+                logger.info("    {}".format(url))
 
             r = action(url, *args, **kwargs)
             if self.verbose >= VERBOSE_RESULT:
-                logging.info("      {}".format(r.status_code))
+                logger.info("      {}".format(r.status_code))
 
             return r.status_code
         except Exception as ex:
             if self.verbose >= VERBOSE_RESULT:
-                logging.info("      failed {url} with exception: {ex}".format(url=url, ex=ex))
+                logger.info("      failed {url} with exception: {ex}".format(url=url, ex=ex))
 
             return 0
 
@@ -85,7 +88,7 @@ class RouterGuard(object):
           False - 网页不可访问
         """
         if self.verbose >= VERBOSE_ACTION:
-            logging.info("  Check router login status...")
+            logger.info("  Check router login status...")
 
         status_code = self._exec(self.session.get, self._get_url(''))
 
@@ -103,7 +106,7 @@ class RouterGuard(object):
             return True
 
         if self.verbose >= VERBOSE_ACTION:
-            logging.info("  Login to router...")
+            logger.info("  Login to router...")
 
         if self._exec(self.session.get, self._get_url('/cgi-bin/index2.asp')) != 200:
             return False
@@ -147,31 +150,31 @@ class RouterGuard(object):
         return False
 
 def check(router_guard):
-    logging.info('Checking router...')
+    logger.info('Checking router...')
     if router_guard.check_router():
-        logging.info('Checking internet...')
+        logger.info('Checking internet...')
         router_guard.check_internet()
 
-    logging.info('Done.')
+    logger.info('Done.')
 
 def reboot(router_guard):
-    logging.info('Login router...')
+    logger.info('Login router...')
     if router_guard.login():
-        logging.warn('Reboot router...')
+        logger.warn('Reboot router...')
         router_guard.reboot()
 
         while True:
-            logging.info('Wait for router ready...')
+            logger.info('Wait for router ready...')
 
             while True:
                 time.sleep(DELAY_SECS)
                 if router_guard.check_router():
                     break
 
-            logging.info('Checking internet...')
+            logger.info('Checking internet...')
             while True:
                 if router_guard.check_internet():
-                    logging.warn('  Done')
+                    logger.warn('  Done')
                     return
 
                 if not router_guard.check_router():
@@ -181,17 +184,20 @@ def reboot(router_guard):
 
 def guard(router_guard):
     while True:
-        logging.info('Check internet...')
+        logger.info('Check internet...')
         if not router_guard.check_internet():
-            logging.info('Check router...')
+            logger.info('Check router...')
             if router_guard.check_router():
                 # 当互联网不可用但路由器可访问时，重启路由器
-                logging.info('Reboot router...')
+                logger.info('Reboot router...')
                 router_guard.reboot()
 
         time.sleep(GUARD_INTERVALS)
 
 def main(**args):
+    logger.info('{} version {} running at {} mode'.format(
+        PROG_NAME, VERSION, args['command']))
+
     if args['verbose'] >= VERBOSE_HTTP:
         enable_debugging()
 
@@ -211,7 +217,7 @@ def main(**args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description=u'''\
-description''')
+router_guard''')
 
     parser.add_argument('-v', '--verbose', action='count', dest='verbose', help=u'Be moderatery verbose')
     parser.add_argument('-q', '--quiet', action='store_true', dest='quiet', default=False, help=u'Only show warning and errors')
@@ -232,5 +238,12 @@ description''')
         logging.basicConfig(level=logging.DEBUG, format=log_format)
     else:
         logging.basicConfig(level=logging.INFO, format=log_format)
+
+    syslog = SysLogHandler(address='/dev/log')
+    syslog.ident = '{}: '.format(PROG_NAME)
+    syslog.setLevel(logging.INFO)
+    syslog.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+
+    logger.addHandler(syslog)
 
     main(**vars(args))
