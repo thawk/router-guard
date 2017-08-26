@@ -4,27 +4,79 @@
 # Imports
 import argparse
 import codecs
+import collections
 import locale
 import logging
-from logging.handlers import SysLogHandler
 import requests
 import time
+import yaml
 
-PROG_NAME='router_guard'
-VERSION=u'20170825'
+from logging.handlers import SysLogHandler
 
-DEFAULT_TIMEOUT=5
-GUARD_INTERVALS=60
-DELAY_SECS=5
+PROG_NAME = 'router_guard'
+VERSION = u'20170826'
 
-USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.101 Safari/537.36'
+DEFAULT_CONFIG_FILE = 'config.yaml'
+
+DELAY_SECS = 1
+
+# 对于配置文件中没有的会，此处作为缺省值
+DEFAULT_CONFIG = {
+    # 要模拟的浏览器
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.101 Safari/537.36',
+    # 光猫相关配置
+    'modem': {
+        'address': '192.168.1.1',
+        'protocol': 'http',
+        'username': 'useradmin',
+        'password': 'nE7jA%5m',
+        # 检测光猫的连接超时时间
+        'timeout': 5,
+    },
+    # 互联网检测的相关配置
+    'internet': {
+        # 用于检测的URL
+        'url': 'http://www.baidu.com',
+        # 检测超时时间
+        'timeout': 5,
+    },
+    # 与拨号相关的配置
+    'pppoe': {
+        # 从光猫就绪到PPPOE拨号完成（互联网就绪）有一段时间，本配置控制最多等待的时间
+        'timeout': 60,
+    },
+    'guard': {
+        # 监控网络连接情况时，每隔多久（秒）检测一次
+        'interval': 60,
+    },
+}
+
 
 # verbose级别
-VERBOSE_ACTION=1  # 记录每次尝试
-VERBOSE_RESULT=2  # 记录每次尝试及结果
-VERBOSE_HTTP=3    # 记录每次的请求及响应
+VERBOSE_ACTION = 1  # 记录每次尝试
+VERBOSE_RESULT = 2  # 记录每次尝试及结果
+VERBOSE_HTTP = 3    # 记录每次的请求及响应
 
 logger = logging.getLogger('router_guard')
+
+def dict_merge(dct, *merge_dcts):
+    """ Recursive dict merge. Inspired by :meth:``dict.update()``, instead of
+    updating only top-level keys, dict_merge recurses down into dicts nested
+    to an arbitrary depth, updating keys. The ``merge_dct`` is merged into
+    ``dct``.
+    :param dct: dict onto which the merge is executed
+    :param merge_dcts: dicts merged into dct
+    :return: dct
+    """
+    for merge_dct in merge_dcts:
+        for k, v in merge_dct.items():
+            if (k in dct and isinstance(dct[k], dict)
+                    and isinstance(merge_dct[k], collections.Mapping)):
+                dict_merge(dct[k], merge_dct[k])
+            else:
+                dct[k] = merge_dct[k]
+
+    return dct
 
 def enable_debugging():
     # Enabling debugging at http.client level (requests->urllib3->http.client)
@@ -44,35 +96,33 @@ def enable_debugging():
 
 
 class RouterGuard(object):
-    def __init__(self, address, username, password, protocol='http', verbose=0):
+    def __init__(self, config, verbose=0):
         super().__init__()
 
-        self.protocol = protocol
-        self.address  = address
-        self.username = username
-        self.password = password
+        self.config = config
         self.verbose  = verbose
 
         self.session = requests.Session()
         self.session.headers = {
-            'User-Agent': USER_AGENT,
+            'User-Agent': self.config['user_agent'],
         }
 
         self.is_logined = False
 
-    def _get_url(self, page):
+    def _get_modem_url(self, page):
         if len(page) > 0 and page[0] == '/':
-            return self.protocol + '://' + self.address + page
+            return (self.config['modem']['protocol'] + '://'
+                    + self.config['modem']['address']
+                    + page)
         else:
-            return self.protocol + '://' + self.address + '/' + page
+            return (self.config['modem']['protocol'] + '://'
+                    + self.config['modem']['address'] + '/'
+                    + page)
 
     def _exec(self, action, url, *args, **kwargs):
         try:
             if self.verbose >= VERBOSE_ACTION:
                 logger.info("    {}".format(url))
-
-            if not 'timeout' in kwargs:
-                kwargs['timeout'] = DEFAULT_TIMEOUT
 
             r = action(url, *args, **kwargs)
             if self.verbose >= VERBOSE_RESULT:
@@ -85,19 +135,21 @@ class RouterGuard(object):
 
             return 0
 
-    def check_router(self):
-        """检查路由器的状态
+    def check_modem(self):
+        """检查光猫的状态
 
         Returns:
           True  - 网页可以访问。通过检查is_logined属性可以判断是否已登录
           False - 网页不可访问
         """
         if self.verbose >= VERBOSE_ACTION:
-            logger.info("  Check router login status...")
+            logger.info("  Check modem login status...")
 
-        status_code = self._exec(self.session.get, self._get_url(''))
+        status_code = self._exec(
+            self.session.get, self._get_modem_url(''),
+            timeout=self.config['modem']['timeout'])
 
-        if status_code == 200:
+        if status_code == requests.codes.ok:
             self.is_logined = True
             return True
 
@@ -105,21 +157,29 @@ class RouterGuard(object):
         return status_code > 0
 
     def login(self):
-        self.check_router()
+        self.check_modem()
 
         if self.is_logined:
             return True
 
         if self.verbose >= VERBOSE_ACTION:
-            logger.info("  Login to router...")
+            logger.info("  Login to modem...")
 
-        if self._exec(self.session.get, self._get_url('/cgi-bin/index2.asp')) != 200:
+        if self._exec(
+                self.session.get,
+                self._get_modem_url('/cgi-bin/index2.asp'),
+                timeout=self.config['modem']['timeout']) != requests.codes.ok:
             return False
 
-        self.session.cookies.set(name='UID', value=self.username, domain=self.address, path='/')
-        self.session.cookies.set(name='PSW', value=self.password, domain=self.address, path='/')
+        for n, v in self.config['modem']['cookies'].items():
+            self.session.cookies.set(
+                name=n, value=v.format(**self.config['modem']),
+                domain=self.config['modem']['address'], path='/')
 
-        if self._exec(self.session.get, self._get_url('/cgi-bin/content.asp')) != 200:
+        if self._exec(
+                self.session.get,
+                self._get_modem_url('/cgi-bin/content.asp'),
+                timeout=self.config['modem']['timeout']) != requests.codes.ok:
             return False
         else:
             self.is_logined = True
@@ -128,21 +188,28 @@ class RouterGuard(object):
     def logout(self):
         self.is_logined = False
 
-        return self._exec(self.session.get, self._get_url('/cgi-bin/logout.cgi')) == 200
+        return self._exec(
+            self.session.get,
+            self._get_modem_url('/cgi-bin/logout.cgi'),
+            timeout=self.config['modem']['timeout']) == requests.codes.ok
 
     def reboot(self):
         return self._exec(
             self.session.post,
-            self._get_url('/cgi-bin/mag-reset.asp'),
+            self._get_modem_url('/cgi-bin/mag-reset.asp'),
             {
                 'rebootflag': '1',
                 'restoreFlag': '1',
                 'isCUCSupport': '0',
-            }
-        ) == 200
+            },
+            timeout=self.config['modem']['timeout']
+        ) == requests.codes.ok
 
-    def check_internet(self, url="http://www.baidu.com"):
-        return self._exec(requests.get, url) > 0
+    def check_internet(self):
+        return self._exec(
+            requests.get,
+            self.config['internet']['url'],
+            timeout=self.config['internet']['timeout']) > 0
 
     def __enter__(self):
         return self
@@ -155,34 +222,38 @@ class RouterGuard(object):
         return False
 
 def check(router_guard):
-    logger.info('Checking router...')
-    if router_guard.check_router():
-        logger.info('Checking internet...')
-        router_guard.check_internet()
+    logger.info('Checking modem...')
+    if not router_guard.check_modem():
+        logger.warn('  Modem is unconnectable!!!')
+        return False
 
-    logger.info('Done.')
+    logger.info('Checking internet...')
+    rc = router_guard.check_internet()
+
+    logger.info('Internet is OK.')
+    return rc
 
 def reboot(router_guard):
-    logger.info('Login router...')
+    logger.info('Login modem...')
     if router_guard.login():
-        logger.warn('Reboot router...')
+        logger.warn('Reboot modem...')
         router_guard.reboot()
 
         while True:
-            logger.info('Wait for router ready...')
+            logger.info('Wait for modem ready...')
 
             while True:
                 time.sleep(DELAY_SECS)
-                if router_guard.check_router():
+                if router_guard.check_modem():
                     break
 
             logger.info('Checking internet...')
             while True:
                 if router_guard.check_internet():
-                    logger.warn('  Done')
+                    logger.warn('  Modem rebooted')
                     return
 
-                if not router_guard.check_router():
+                if not router_guard.check_modem():
                     break
 
                 time.sleep(DELAY_SECS)
@@ -191,13 +262,15 @@ def guard(router_guard):
     while True:
         logger.info('Check internet...')
         if not router_guard.check_internet():
-            logger.info('Check router...')
-            if router_guard.check_router():
-                # 当互联网不可用但路由器可访问时，重启路由器
-                logger.info('Reboot router...')
+            logger.warn('Internet is unconnectable, check modem...')
+            if router_guard.check_modem():
+                # 当互联网不可用但光猫可访问时，重启光猫
+                logger.info('Reboot modem...')
                 router_guard.reboot()
+            else:
+                logger.warn('Modem is unconnectable too')
 
-        time.sleep(GUARD_INTERVALS)
+        time.sleep(router_guard.config['guard']['interval'])
 
 def main(**args):
     logger.info('{} version {} running at {} mode'.format(
@@ -206,10 +279,12 @@ def main(**args):
     if args['verbose'] >= VERBOSE_HTTP:
         enable_debugging()
 
-    router_guard = RouterGuard(
-        address='192.168.1.1', protocol='http',
-        username='useradmin',  password='nE7jA%5m',
-        verbose=args['verbose'])
+    with open(args['config_file'], 'r') as f:
+        config = yaml.load(f)
+
+    config = dict_merge({}, DEFAULT_CONFIG, config)
+
+    router_guard = RouterGuard(config, verbose=args['verbose'])
 
     if args['command'] == "reboot":
         reboot(router_guard)
@@ -227,6 +302,7 @@ router_guard''')
     parser.add_argument('-v', '--verbose', action='count', dest='verbose', help=u'Be moderatery verbose')
     parser.add_argument('-q', '--quiet', action='store_true', dest='quiet', default=False, help=u'Only show warning and errors')
     parser.add_argument('--version', action='version', version=VERSION, help=u'Show version and quit')
+    parser.add_argument('-c', '--config', default=DEFAULT_CONFIG_FILE, action='store', dest='config_file', help=u'Configuration file')
     parser.add_argument('command', nargs='?', default='check', choices=['check', 'guard', 'reboot'], help=u'Command')
 
     args = parser.parse_args()

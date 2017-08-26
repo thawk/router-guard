@@ -1,0 +1,21 @@
+user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.101 Safari/537.36'
+
+modem:
+    address: 192.168.1.1
+    protocol: http
+    username: useradmin
+    password: nE7jA%5m
+    timeout: 5
+    cookies:
+        UID: '{username}'
+        PSW: '{password}'
+
+internet:
+    url: http://www.baidu.com
+    timeout: 5
+
+pppoe:
+    timeout: 60
+
+guard:
+    interval: 60
