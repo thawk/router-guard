@@ -90,7 +90,7 @@ def enable_debugging():
 
     logging.basicConfig() # you need to initialize logging, otherwise you will not see anything from requests
     logging.getLogger().setLevel(logging.DEBUG)
-    requests_log = logging.getLogger("yip")
+    requests_log = logging.getLogger('yip')
     requests_log.setLevel(logging.DEBUG)
     requests_log.propagate = True
 
@@ -122,18 +122,18 @@ class RouterGuard(object):
     def _exec(self, action, url, *args, **kwargs):
         try:
             if self.verbose >= VERBOSE_ACTION:
-                logger.info("    {}".format(url))
+                logger.info('    {}'.format(url))
 
             r = action(url, *args, **kwargs)
             if self.verbose >= VERBOSE_RESULT:
-                logger.info("      {}".format(r.status_code))
+                logger.info('      {}'.format(r.status_code))
 
-            return r.status_code
+            return (r.status_code, r.text)
         except Exception as ex:
             if self.verbose >= VERBOSE_RESULT:
-                logger.info("      failed {url} with exception: {ex}".format(url=url, ex=ex))
+                logger.info('      failed {url} with exception: {ex}'.format(url=url, ex=ex))
 
-            return 0
+            return (0, '')
 
     def check_modem(self):
         """检查光猫的状态
@@ -143,9 +143,9 @@ class RouterGuard(object):
           False - 网页不可访问
         """
         if self.verbose >= VERBOSE_ACTION:
-            logger.info("  Check modem login status...")
+            logger.info('  Check modem login status...')
 
-        status_code = self._exec(
+        status_code, _ = self._exec(
             self.session.get, self._get_modem_url(''),
             timeout=self.config['modem']['timeout'])
 
@@ -163,12 +163,12 @@ class RouterGuard(object):
             return True
 
         if self.verbose >= VERBOSE_ACTION:
-            logger.info("  Login to modem...")
+            logger.info('  Login to modem...')
 
         if self._exec(
                 self.session.get,
                 self._get_modem_url('/cgi-bin/index2.asp'),
-                timeout=self.config['modem']['timeout']) != requests.codes.ok:
+                timeout=self.config['modem']['timeout'])[0] != requests.codes.ok:
             return False
 
         for n, v in self.config['modem']['cookies'].items():
@@ -179,7 +179,7 @@ class RouterGuard(object):
         if self._exec(
                 self.session.get,
                 self._get_modem_url('/cgi-bin/content.asp'),
-                timeout=self.config['modem']['timeout']) != requests.codes.ok:
+                timeout=self.config['modem']['timeout'])[0] != requests.codes.ok:
             return False
         else:
             self.is_logined = True
@@ -191,7 +191,7 @@ class RouterGuard(object):
         return self._exec(
             self.session.get,
             self._get_modem_url('/cgi-bin/logout.cgi'),
-            timeout=self.config['modem']['timeout']) == requests.codes.ok
+            timeout=self.config['modem']['timeout'])[0] == requests.codes.ok
 
     def reboot(self):
         return self._exec(
@@ -203,13 +203,25 @@ class RouterGuard(object):
                 'isCUCSupport': '0',
             },
             timeout=self.config['modem']['timeout']
-        ) == requests.codes.ok
+        )[0] == requests.codes.ok
 
     def check_internet(self):
         return self._exec(
             requests.get,
             self.config['internet']['url'],
-            timeout=self.config['internet']['timeout']) > 0
+            timeout=self.config['internet']['timeout'])[0] > 0
+
+    def detect_ip(self):
+        for url in self.config['ip_detect']['urls']:
+            status_code, ip = self._exec(
+                requests.get,
+                url,
+                timeout=self.config['ip_detect']['timeout'])
+
+            if status_code == requests.codes.ok:
+                return ip
+
+        return ""
 
     def __enter__(self):
         return self
@@ -230,7 +242,16 @@ def check(router_guard):
     logger.info('Checking internet...')
     rc = router_guard.check_internet()
 
-    logger.info('Internet is OK.')
+    logger.info('  Internet is OK.')
+
+    logger.info('Detecting IP address...')
+    ip = router_guard.detect_ip()
+
+    if ip:
+        logger.info('  IP address: {}'.format(ip))
+    else:
+        logger.info('  Failed to detect IP address')
+
     return rc
 
 def reboot(router_guard):
@@ -286,9 +307,9 @@ def main(**args):
 
     router_guard = RouterGuard(config, verbose=args['verbose'])
 
-    if args['command'] == "reboot":
+    if args['command'] == 'reboot':
         reboot(router_guard)
-    elif args['command'] == "guard":
+    elif args['command'] == 'guard':
         guard(router_guard)
     else:
         check(router_guard)
@@ -323,7 +344,7 @@ router_guard''')
     syslog = SysLogHandler(address='/dev/log')
     syslog.ident = '{}: '.format(PROG_NAME)
     syslog.setLevel(logging.INFO)
-    syslog.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    syslog.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
 
     logger.addHandler(syslog)
 
