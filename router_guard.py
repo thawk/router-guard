@@ -260,6 +260,13 @@ def reboot(router_guard):
         logger.warn('Reboot modem...')
         router_guard.reboot()
 
+        logger.info('Wait for modem reboot...')
+        while True:
+            time.sleep(DELAY_SECS)
+            if not router_guard.check_modem():
+                break
+
+        timer_start = time.time()
         while True:
             logger.info('Wait for modem ready...')
 
@@ -268,13 +275,33 @@ def reboot(router_guard):
                 if router_guard.check_modem():
                     break
 
+            now = time.time()
+            logger.info('  Modem ready in {} secs...'.format(int(now - timer_start)))
+
+            timer_start = now
+
             logger.info('Checking internet...')
             while True:
                 if router_guard.check_internet():
-                    logger.warn('  Modem rebooted')
+                    logger.info('  Internet ready in {} secs...'.format(int(now - timer_start)))
+
+                    logger.info('Detecting IP address...')
+                    ip = router_guard.detect_ip()
+
+                    if ip:
+                        logger.info('  IP address: {}'.format(ip))
+                    else:
+                        logger.info('  Failed to detect IP address')
+
                     return
 
-                if not router_guard.check_modem():
+                now = time.time()
+                if now - timer_start > router_guard.config['pppoe']['timeout'] \
+                        and not router_guard.check_modem():
+                    # 在指定时间内，互联网还未就绪
+                    logger.error(
+                        '  Internet not ready after {} secs'.format(
+                            now - timer_start))
                     break
 
                 time.sleep(DELAY_SECS)
@@ -283,13 +310,13 @@ def guard(router_guard):
     while True:
         logger.info('Check internet...')
         if not router_guard.check_internet():
-            logger.warn('Internet is unconnectable, check modem...')
+            logger.warn('  Internet is unconnectable, check modem...')
             if router_guard.check_modem():
                 # 当互联网不可用但光猫可访问时，重启光猫
                 logger.info('Reboot modem...')
-                router_guard.reboot()
+                reboot(router_guard)
             else:
-                logger.warn('Modem is unconnectable too')
+                logger.warn('  Modem is unconnectable too')
 
         time.sleep(router_guard.config['guard']['interval'])
 
