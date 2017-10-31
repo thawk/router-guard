@@ -14,7 +14,7 @@ import yaml
 from logging.handlers import SysLogHandler
 
 PROG_NAME = 'router_guard'
-VERSION = u'20170826'
+VERSION = u'20171031'
 
 DEFAULT_CONFIG_FILE = 'config.yaml'
 
@@ -58,6 +58,19 @@ VERBOSE_RESULT = 2  # 记录每次尝试及结果
 VERBOSE_HTTP = 3    # 记录每次的请求及响应
 
 logger = logging.getLogger('router_guard')
+
+
+class SyslogFilter(logging.Filter):
+    """
+    Filter messages by 'skip_syslog' property.
+    """
+
+    def filter(self, record):
+        if record.__dict__.get('skip_syslog', False):
+            return False
+
+        return True
+
 
 def dict_merge(dct, *merge_dcts):
     """ Recursive dict merge. Inspired by :meth:``dict.update()``, instead of
@@ -308,7 +321,7 @@ def reboot(router_guard):
 
 def guard(router_guard):
     while True:
-        logger.info('Check internet...')
+        logger.info('Check internet...', extra={'skip_syslog': True})
         if not router_guard.check_internet():
             logger.warn('  Internet is unconnectable, check modem...')
             if router_guard.check_modem():
@@ -372,6 +385,7 @@ router_guard''')
     syslog.ident = '{}: '.format(PROG_NAME)
     syslog.setLevel(logging.INFO)
     syslog.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    syslog.addFilter(SyslogFilter())
 
     logger.addHandler(syslog)
 
