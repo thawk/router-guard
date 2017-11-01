@@ -14,7 +14,7 @@ import yaml
 from logging.handlers import SysLogHandler
 
 PROG_NAME = 'router_guard'
-VERSION = u'20171031'
+VERSION = u'20171101'
 
 DEFAULT_CONFIG_FILE = 'config.yaml'
 
@@ -121,6 +121,7 @@ class RouterGuard(object):
         }
 
         self.is_logined = False
+        self.last_reboot = None
 
     def _get_modem_url(self, page):
         if len(page) > 0 and page[0] == '/':
@@ -207,7 +208,7 @@ class RouterGuard(object):
             timeout=self.config['modem']['timeout'])[0] == requests.codes.ok
 
     def reboot(self):
-        return self._exec(
+        ret = self._exec(
             self.session.post,
             self._get_modem_url('/cgi-bin/mag-reset.asp'),
             {
@@ -217,6 +218,11 @@ class RouterGuard(object):
             },
             timeout=self.config['modem']['timeout']
         )[0] == requests.codes.ok
+
+        if ret:
+            self.last_reboot = time.time()
+
+        return ret
 
     def check_internet(self):
         return self._exec(
@@ -268,12 +274,12 @@ def check(router_guard):
     return rc
 
 def reboot(router_guard):
-    logger.info('Login modem...')
+    logger.info('  Login modem...')
     if router_guard.login():
-        logger.warn('Reboot modem...')
+        logger.warn('  Rebooting modem...')
         router_guard.reboot()
 
-        logger.info('Wait for modem reboot...')
+        logger.info('  Wait for modem reboot...')
         while True:
             time.sleep(DELAY_SECS)
             if not router_guard.check_modem():
@@ -281,7 +287,7 @@ def reboot(router_guard):
 
         timer_start = time.time()
         while True:
-            logger.info('Wait for modem ready...')
+            logger.info('  Wait for modem ready...')
 
             while True:
                 time.sleep(DELAY_SECS)
@@ -289,20 +295,20 @@ def reboot(router_guard):
                     break
 
             now = time.time()
-            logger.info('  Modem ready in {} secs...'.format(int(now - timer_start)))
+            logger.info('    Modem ready in {} secs...'.format(int(now - timer_start)))
 
             timer_start = now
 
-            logger.info('Checking internet...')
+            logger.info('  Checking internet...')
             while True:
                 if router_guard.check_internet():
-                    logger.info('  Internet ready in {} secs...'.format(int(now - timer_start)))
+                    logger.info('    Internet ready in {} secs...'.format(int(now - timer_start)))
 
-                    logger.info('Detecting IP address...')
+                    logger.info('  Detecting IP address...')
                     ip = router_guard.detect_ip()
 
                     if ip:
-                        logger.info('  IP address: {}'.format(ip))
+                        logger.info('    IP address: {}'.format(ip))
                     else:
                         logger.info('  Failed to detect IP address')
 
@@ -313,7 +319,7 @@ def reboot(router_guard):
                         and not router_guard.check_modem():
                     # 在指定时间内，互联网还未就绪
                     logger.error(
-                        '  Internet not ready after {} secs'.format(
+                        '    Internet not ready after {} secs'.format(
                             now - timer_start))
                     break
 
@@ -325,6 +331,11 @@ def guard(router_guard):
         if not router_guard.check_internet():
             logger.warn('  Internet is unconnectable, check modem...')
             if router_guard.check_modem():
+                if router_guard.last_reboot:
+                    elapsed = time.time() - router_guard.last_reboot
+                    logger.info('  Last reboot was {} ago'.format(
+                        time.strftime("%H:%M:%S", time.gmtime(elapsed))))
+
                 # 当互联网不可用但光猫可访问时，重启光猫
                 logger.info('Reboot modem...')
                 reboot(router_guard)
@@ -348,6 +359,7 @@ def main(**args):
     router_guard = RouterGuard(config, verbose=args['verbose'])
 
     if args['command'] == 'reboot':
+        logger.info('Reboot modem...')
         reboot(router_guard)
     elif args['command'] == 'guard':
         guard(router_guard)
