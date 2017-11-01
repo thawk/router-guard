@@ -7,6 +7,7 @@ import codecs
 import collections
 import locale
 import logging
+import os
 import requests
 import time
 import yaml
@@ -16,7 +17,8 @@ from logging.handlers import SysLogHandler
 PROG_NAME = 'router_guard'
 VERSION = u'20171101'
 
-DEFAULT_CONFIG_FILE = 'config.yaml'
+SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
+DEFAULT_CONFIG_FILE = os.path.join(SCRIPT_PATH, 'config.yaml')
 
 DELAY_SECS = 1
 
@@ -351,7 +353,8 @@ def main(**args):
     if args['verbose'] >= VERBOSE_HTTP:
         enable_debugging()
 
-    with open(args['config_file'], 'r') as f:
+    config_file = args['config_file'] if args['config_file'] else DEFAULT_CONFIG_FILE
+    with open(config_file, 'r') as f:
         config = yaml.load(f)
 
     config = dict_merge({}, DEFAULT_CONFIG, config)
@@ -375,7 +378,7 @@ router_guard''')
     parser.add_argument('-v', '--verbose', action='count', dest='verbose', help=u'Be moderatery verbose')
     parser.add_argument('-q', '--quiet', action='store_true', dest='quiet', default=False, help=u'Only show warning and errors')
     parser.add_argument('--version', action='version', version=VERSION, help=u'Show version and quit')
-    parser.add_argument('-c', '--config', default=DEFAULT_CONFIG_FILE, action='store', dest='config_file', help=u'Configuration file')
+    parser.add_argument('-c', '--config', action='store', dest='config_file', help=u'Configuration file')
     parser.add_argument('command', nargs='?', default='check', choices=['check', 'guard', 'reboot'], help=u'Command')
 
     args = parser.parse_args()
