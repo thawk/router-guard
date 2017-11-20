@@ -335,8 +335,9 @@ def guard(router_guard):
             if router_guard.check_modem():
                 if router_guard.last_reboot:
                     elapsed = time.time() - router_guard.last_reboot
-                    logger.info('  Last reboot was {} ago'.format(
-                        time.strftime("%H:%M:%S", time.gmtime(elapsed))))
+                    logger.info('  Last reboot was {days} days and {time} ago'.format(
+                        days=elapsed // (24 * 3600),
+                        time=time.strftime("%H:%M:%S", time.gmtime(elapsed))))
 
                 # 当互联网不可用但光猫可访问时，重启光猫
                 logger.info('Reboot modem...')
