@@ -15,7 +15,7 @@ import yaml
 from logging.handlers import SysLogHandler
 
 PROG_NAME = 'router_guard'
-VERSION = u'20171101'
+VERSION = u'20180214'
 
 SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
 DEFAULT_CONFIG_FILE = os.path.join(SCRIPT_PATH, 'config.yaml')
@@ -279,7 +279,8 @@ def reboot(router_guard):
     logger.info('  Login modem...')
     if router_guard.login():
         logger.warn('  Rebooting modem...')
-        router_guard.reboot()
+        if not router_guard.reboot():
+            return False
 
         logger.info('  Wait for modem reboot...')
         while True:
@@ -314,7 +315,7 @@ def reboot(router_guard):
                     else:
                         logger.info('  Failed to detect IP address')
 
-                    return
+                    return True
 
                 now = time.time()
                 if now - timer_start > router_guard.config['pppoe']['timeout'] \
@@ -327,12 +328,20 @@ def reboot(router_guard):
 
                 time.sleep(DELAY_SECS)
 
+    return False
+
+
 def guard(router_guard):
+    broken_time = None
+
     while True:
         logger.info('Check internet...', extra={'skip_syslog': True})
         if not router_guard.check_internet():
-            logger.warn('  Internet is unconnectable, check modem...')
+            if not broken_time:
+                broken_time = time.time()
+
             if router_guard.check_modem():
+                logger.warn('  Internet is unconnectable, but modem ok. Reboot modem...')
                 if router_guard.last_reboot:
                     elapsed = time.time() - router_guard.last_reboot
                     logger.info('  Last reboot was {days} days and {time} ago'.format(
@@ -340,12 +349,23 @@ def guard(router_guard):
                         time=time.strftime("%H:%M:%S", time.gmtime(elapsed))))
 
                 # 当互联网不可用但光猫可访问时，重启光猫
-                logger.info('Reboot modem...')
-                reboot(router_guard)
+                if reboot(router_guard):
+                    # 成功重启，马上再次执行检查
+                    continue
             else:
-                logger.warn('  Modem is unconnectable too')
+                logger.warn('  Internet is unconnectable, modem is unconnectable too, wait a minute...')
+        else:
+            if broken_time:
+                elapsed = time.time() - broken_time
+                logger.info(
+                    'Internet is recovery after at least %s days and %s',
+                    elapsed // (24 * 3600),
+                    time.strftime("%H:%M:%S", time.gmtime(elapsed)))
+
+                broken_time = None
 
         time.sleep(router_guard.config['guard']['interval'])
+
 
 def main(**args):
     logger.info('{} version {} running at {} mode'.format(
