@@ -12,13 +12,18 @@ import requests
 import time
 import yaml
 
-from logging.handlers import SysLogHandler
+from logging.handlers import RotatingFileHandler, SysLogHandler
 
 PROG_NAME = 'router_guard'
-VERSION = u'20180214'
+VERSION = u'20180314'
 
 SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
 DEFAULT_CONFIG_FILE = os.path.join(SCRIPT_PATH, 'config.yaml')
+
+# Limited size of one log file in bytes
+LOG_FILE_SIZE = 10*1024*1024
+# How many backup logs should we keep?
+LOG_FILE_BACKUP_COUNT = 2
 
 DELAY_SECS = 1
 
@@ -400,6 +405,7 @@ router_guard''')
     parser.add_argument('-q', '--quiet', action='store_true', dest='quiet', default=False, help=u'Only show warning and errors')
     parser.add_argument('--version', action='version', version=VERSION, help=u'Show version and quit')
     parser.add_argument('-c', '--config', action='store', dest='config_file', help=u'Configuration file')
+    parser.add_argument('-l', '--log', action='store', dest='log_file', help=u'Log file')
     parser.add_argument('command', nargs='?', default='check', choices=['check', 'guard', 'reboot'], help=u'Command')
 
     args = parser.parse_args()
@@ -417,12 +423,17 @@ router_guard''')
     else:
         logging.basicConfig(level=logging.INFO, format=log_format)
 
-    syslog = SysLogHandler(address='/dev/log')
-    syslog.ident = '{}: '.format(PROG_NAME)
-    syslog.setLevel(logging.INFO)
-    syslog.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-    syslog.addFilter(SyslogFilter())
+    if hasattr(args, 'log_file') and args.log_file:
+        if args.log_file == 'SYSLOG':
+            syslog = SysLogHandler(address='/dev/log')
+            syslog.ident = '{}: '.format(PROG_NAME)
+            syslog.setLevel(logging.INFO)
+            syslog.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+            syslog.addFilter(SyslogFilter())
 
-    logger.addHandler(syslog)
+            logger.addHandler(syslog)
+        else:
+            logfile = RotatingFileHandler(args.log_file, LOG_FILE_SIZE, LOG_FILE_BACKUP_COUNT, encoding='utf-8')
+            logger.addHandler(logfile)
 
     main(**vars(args))
