@@ -4,11 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-requests = "*"
-pyyaml = "*"
+requests = ">=2.20.0"
+pyyaml = "==4.2b4"
+urllib3 = ">=1.23"
 
 [dev-packages]
 pytest = "*"
 
 [requires]
-python_version = "3.6"
+python_version = "3"
